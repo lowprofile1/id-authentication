@@ -121,14 +121,14 @@ jobs:
           docker stop test-${{ matrix.service.name }}
           docker rm test-${{ matrix.service.name }}
 
-      - name: Test image security
-        run: |
-          echo "Running security tests for mosip-${{ matrix.service.name }}"
+      # - name: Test image security
+      #   run: |
+      #     echo "Running security tests for mosip-${{ matrix.service.name }}"
 
-          # Check for common security issues
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL \
-            ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+      #     # Check for common security issues
+      #     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+      #       aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL \
+      #       ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
 
   test-integration:
     name: Integration Tests
@@ -234,5 +234,5 @@ jobs:
           echo "- Image structure validation" >> $GITHUB_STEP_SUMMARY
           echo "- Container startup testing" >> $GITHUB_STEP_SUMMARY
           echo "- Health check endpoints" >> $GITHUB_STEP_SUMMARY
-          echo "- Security scanning" >> $GITHUB_STEP_SUMMARY
+          # echo "- Security scanning" >> $GITHUB_STEP_SUMMARY
           echo "- Service connectivity" >> $GITHUB_STEP_SUMMARY

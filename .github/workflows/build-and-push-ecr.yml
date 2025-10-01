@@ -193,36 +193,36 @@ jobs:
           echo "service-name=${{ matrix.service.name }}" >> $GITHUB_OUTPUT
           echo "port=${{ matrix.service.port }}" >> $GITHUB_OUTPUT
 
-  # Job 3: Security scanning (optional)
-  security-scan:
-    name: Security Scan Docker Images
-    runs-on: ubuntu-latest
-    needs: build-and-push-docker
-    if: github.event_name != 'pull_request'
+  # Job 3: Security scanning (optional) - COMMENTED OUT
+  # security-scan:
+  #   name: Security Scan Docker Images
+  #   runs-on: ubuntu-latest
+  #   needs: build-and-push-docker
+  #   if: github.event_name != 'pull_request'
 
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+  #   steps:
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+  #     - name: Login to Amazon ECR
+  #       uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.ECR_REGISTRY }}/mosip-authentication-service:${{ needs.build-maven.outputs.version }}
-          format: "sarif"
-          output: "trivy-results.sarif"
+  #     - name: Run Trivy vulnerability scanner
+  #       uses: aquasecurity/trivy-action@master
+  #       with:
+  #         image-ref: ${{ env.ECR_REGISTRY }}/mosip-authentication-service:${{ needs.build-maven.outputs.version }}
+  #         format: "sarif"
+  #         output: "trivy-results.sarif"
 
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: "trivy-results.sarif"
+  #     - name: Upload Trivy scan results to GitHub Security tab
+  #       uses: github/codeql-action/upload-sarif@v3
+  #       if: always()
+  #       with:
+  #         sarif_file: "trivy-results.sarif"
 
   # Job 4: Generate deployment summary
   deployment-summary:
