@@ -88,8 +88,8 @@ jobs:
         id: build
         run: |
           cd authentication
-          # Skip tests by default to avoid external dependency issues
-          mvn clean package -DskipTests
+          # Skip all tests completely to avoid external dependency issues
+          mvn clean package -DskipTests -Dmaven.test.skip=true
 
           # Create artifacts directory
           mkdir -p ../build-artifacts
