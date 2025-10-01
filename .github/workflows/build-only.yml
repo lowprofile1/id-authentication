@@ -1,6 +1,22 @@
 name: Build MOSIP ID Authentication (No ECR)
 
 on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - "authentication/**"
+      - ".github/workflows/build-only.yml"
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - "authentication/**"
+      - ".github/workflows/build-only.yml"
   workflow_dispatch:
     inputs:
       environment:

@@ -2,7 +2,11 @@ name: Test MOSIP ID Authentication Docker Images
 
 on:
   workflow_run:
-    workflows: ["Build and Push MOSIP ID Authentication to ECR"]
+    workflows:
+      [
+        "Build and Push MOSIP ID Authentication to ECR",
+        "Build MOSIP ID Authentication (No ECR)",
+      ]
     types: [completed]
   workflow_dispatch:
     inputs:
