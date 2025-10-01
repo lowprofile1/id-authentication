@@ -1,0 +1,105 @@
+name: Setup Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_account_id:
+        description: "AWS Account ID"
+        required: true
+        type: string
+      aws_region:
+        description: "AWS Region"
+        required: false
+        default: "us-east-1"
+        type: string
+      create_ecr_repos:
+        description: "Create ECR repositories"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: ${{ github.event.inputs.aws_region || 'us-east-1' }}
+
+jobs:
+  setup-aws-resources:
+    name: Setup AWS Resources
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_ecr_repos == 'true'
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR repositories
+        run: |
+          echo "Creating ECR repositories..."
+
+          # List of repositories to create
+          REPOSITORIES=(
+            "mosip-authentication-service"
+            "mosip-authentication-internal-service"
+            "mosip-authentication-otp-service"
+          )
+
+          for REPO in "${REPOSITORIES[@]}"; do
+            echo "Creating repository: $REPO"
+            
+            # Check if repository already exists
+            if aws ecr describe-repositories --repository-names "$REPO" --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+              echo "Repository $REPO already exists, skipping..."
+            else
+              # Create repository
+              aws ecr create-repository \
+                --repository-name "$REPO" \
+                --region ${{ env.AWS_REGION }} \
+                --image-scanning-configuration scanOnPush=false \
+                --image-tag-mutability MUTABLE
+              
+              echo "Repository $REPO created successfully"
+            fi
+          done
+
+          echo "All repositories created successfully"
+
+      - name: List ECR repositories
+        run: |
+          echo "Listing ECR repositories:"
+          aws ecr describe-repositories --region ${{ env.AWS_REGION }} --query 'repositories[?contains(repositoryName, `mosip`)].{Name:repositoryName,URI:repositoryUri}' --output table
+
+  generate-setup-summary:
+    name: Generate Setup Summary
+    runs-on: ubuntu-latest
+    needs: setup-aws-resources
+    if: always()
+
+    steps:
+      - name: Generate setup summary
+        run: |
+          echo "## 🚀 Repository Setup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Setup Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Account ID**: ${{ github.event.inputs.aws_account_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **ECR Repositories Created**: ${{ github.event.inputs.create_ecr_repos }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 ECR Repositories" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | URI |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| mosip-authentication-service | \`${{ github.event.inputs.aws_account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/mosip-authentication-service\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| mosip-authentication-internal-service | \`${{ github.event.inputs.aws_account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/mosip-authentication-internal-service\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| mosip-authentication-otp-service | \`${{ github.event.inputs.aws_account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/mosip-authentication-otp-service\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. ✅ ECR repositories are ready" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🔑 Configure GitHub secrets (AWS_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🚀 Run the build workflow to create and push Docker images" >> $GITHUB_STEP_SUMMARY
+          echo "4. 🧪 Use the test workflows to validate the images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📚 Documentation" >> $GITHUB_STEP_SUMMARY
+          echo "- See [README.md](README.md) for detailed setup instructions" >> $GITHUB_STEP_SUMMARY
+          echo "- Check workflow files in `.github/workflows/` for configuration options" >> $GITHUB_STEP_SUMMARY

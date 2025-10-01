@@ -1,0 +1,140 @@
+name: Cleanup ECR Images
+
+on:
+  schedule:
+    # Run every Sunday at 2 AM UTC
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      keep_days:
+        description: "Number of days to keep images"
+        required: true
+        default: "30"
+        type: string
+      dry_run:
+        description: "Dry run (show what would be deleted without actually deleting)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  cleanup-ecr:
+    name: Cleanup ECR Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set cleanup parameters
+        id: params
+        run: |
+          echo "keep_days=${{ github.event.inputs.keep_days || '30' }}" >> $GITHUB_OUTPUT
+          echo "dry_run=${{ github.event.inputs.dry_run || 'true' }}" >> $GITHUB_OUTPUT
+
+      - name: List ECR repositories
+        run: |
+          echo "Available ECR repositories:"
+          aws ecr describe-repositories --region ${{ env.AWS_REGION }} --query 'repositories[?contains(repositoryName, `mosip`)].repositoryName' --output table
+
+      - name: Cleanup old images
+        run: |
+          REPOSITORIES=("mosip-authentication-service" "mosip-authentication-internal-service" "mosip-authentication-otp-service")
+          KEEP_DAYS=${{ steps.params.outputs.keep_days }}
+          DRY_RUN=${{ steps.params.outputs.dry_run }}
+
+          for REPO in "${REPOSITORIES[@]}"; do
+            echo "Processing repository: $REPO"
+            
+            # Get images older than KEEP_DAYS
+            OLD_IMAGES=$(aws ecr list-images \
+              --repository-name "$REPO" \
+              --region ${{ env.AWS_REGION }} \
+              --filter tagStatus=TAGGED \
+              --query "imageIds[?imagePushedAt < \`$(date -d "$KEEP_DAYS days ago" --iso-8601)\`]" \
+              --output json)
+            
+            if [ "$OLD_IMAGES" != "[]" ]; then
+              echo "Found old images in $REPO:"
+              echo "$OLD_IMAGES" | jq -r '.[] | "\(.imageDigest) - \(.imageTag // "untagged")"'
+              
+              if [ "$DRY_RUN" = "false" ]; then
+                echo "Deleting old images from $REPO..."
+                echo "$OLD_IMAGES" | jq -r '.[] | .imageDigest' | while read digest; do
+                  aws ecr batch-delete-image \
+                    --repository-name "$REPO" \
+                    --region ${{ env.AWS_REGION }} \
+                    --image-ids imageDigest="$digest"
+                done
+                echo "Deleted old images from $REPO"
+              else
+                echo "DRY RUN: Would delete old images from $REPO"
+              fi
+            else
+              echo "No old images found in $REPO"
+            fi
+            echo "---"
+          done
+
+      - name: Cleanup untagged images
+        run: |
+          REPOSITORIES=("mosip-authentication-service" "mosip-authentication-internal-service" "mosip-authentication-otp-service")
+          DRY_RUN=${{ steps.params.outputs.dry_run }}
+
+          for REPO in "${REPOSITORIES[@]}"; do
+            echo "Processing untagged images in: $REPO"
+            
+            # Get untagged images
+            UNTAGGED_IMAGES=$(aws ecr list-images \
+              --repository-name "$REPO" \
+              --region ${{ env.AWS_REGION }} \
+              --filter tagStatus=UNTAGGED \
+              --query "imageIds[].imageDigest" \
+              --output json)
+            
+            if [ "$UNTAGGED_IMAGES" != "[]" ]; then
+              echo "Found untagged images in $REPO:"
+              echo "$UNTAGGED_IMAGES" | jq -r '.[]'
+              
+              if [ "$DRY_RUN" = "false" ]; then
+                echo "Deleting untagged images from $REPO..."
+                aws ecr batch-delete-image \
+                  --repository-name "$REPO" \
+                  --region ${{ env.AWS_REGION }} \
+                  --image-ids "$UNTAGGED_IMAGES"
+                echo "Deleted untagged images from $REPO"
+              else
+                echo "DRY RUN: Would delete untagged images from $REPO"
+              fi
+            else
+              echo "No untagged images found in $REPO"
+            fi
+            echo "---"
+          done
+
+      - name: Generate cleanup summary
+        run: |
+          echo "## 🧹 ECR Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📅 Cleanup Parameters" >> $GITHUB_STEP_SUMMARY
+          echo "- **Keep Days**: ${{ steps.params.outputs.keep_days }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry Run**: ${{ steps.params.outputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🗂️ Processed Repositories" >> $GITHUB_STEP_SUMMARY
+          echo "- mosip-authentication-service" >> $GITHUB_STEP_SUMMARY
+          echo "- mosip-authentication-internal-service" >> $GITHUB_STEP_SUMMARY
+          echo "- mosip-authentication-otp-service" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Cleanup Actions" >> $GITHUB_STEP_SUMMARY
+          echo "- Removed images older than ${{ steps.params.outputs.keep_days }} days" >> $GITHUB_STEP_SUMMARY
+          echo "- Removed untagged images" >> $GITHUB_STEP_SUMMARY
+          echo "- Preserved latest and recent tagged images" >> $GITHUB_STEP_SUMMARY

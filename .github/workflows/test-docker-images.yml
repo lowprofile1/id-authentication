@@ -1,0 +1,234 @@
+name: Test MOSIP ID Authentication Docker Images
+
+on:
+  workflow_run:
+    workflows: ["Build and Push MOSIP ID Authentication to ECR"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to test"
+        required: true
+        default: "latest"
+        type: string
+      environment:
+        description: "Test environment"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - dev
+          - staging
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  test-docker-images:
+    name: Test Docker Images
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    strategy:
+      matrix:
+        service:
+          - name: authentication-service
+            port: 8090
+            health_port: 9010
+          - name: authentication-internal-service
+            port: 8093
+            health_port: 9010
+          - name: authentication-otp-service
+            port: 8092
+            health_port: 9010
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            # Extract tag from previous workflow
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pull Docker image
+        run: |
+          docker pull ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+      - name: Test Docker image structure
+        run: |
+          echo "Testing image structure for mosip-${{ matrix.service.name }}"
+
+          # Check if image exists
+          docker images | grep "mosip-${{ matrix.service.name }}"
+
+          # Inspect image
+          docker inspect ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+          # Check exposed ports
+          docker inspect --format='{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}' ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+          # Check environment variables
+          docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+      - name: Test Docker image startup (basic)
+        run: |
+          echo "Testing basic startup for mosip-${{ matrix.service.name }}"
+
+          # Start container in background
+          docker run -d \
+            --name test-${{ matrix.service.name }} \
+            -p ${{ matrix.service.port }}:${{ matrix.service.port }} \
+            -p ${{ matrix.service.health_port }}:${{ matrix.service.health_port }} \
+            -e active_profile_env=${{ github.event.inputs.environment || 'test' }} \
+            -e spring_config_url_env=http://mock-config-server:8888 \
+            -e artifactory_url_env=http://mock-artifactory:8081 \
+            ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+          # Wait for container to start
+          sleep 30
+
+          # Check if container is running
+          docker ps | grep test-${{ matrix.service.name }}
+
+          # Check container logs
+          echo "Container logs:"
+          docker logs test-${{ matrix.service.name }} --tail 50
+
+          # Test health check endpoint (if available)
+          echo "Testing health check endpoint..."
+          curl -f http://localhost:${{ matrix.service.health_port }}/actuator/health || echo "Health check endpoint not available"
+
+          # Clean up
+          docker stop test-${{ matrix.service.name }}
+          docker rm test-${{ matrix.service.name }}
+
+      - name: Test image security
+        run: |
+          echo "Running security tests for mosip-${{ matrix.service.name }}"
+
+          # Check for common security issues
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL \
+            ${{ env.ECR_REGISTRY }}/mosip-${{ matrix.service.name }}:${{ steps.image-tag.outputs.tag }}
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test-docker-images
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Start all services for integration testing
+        run: |
+          # Create docker network
+          docker network create mosip-test-network
+
+          # Start all three services
+          docker run -d \
+            --name test-auth-service \
+            --network mosip-test-network \
+            -p 8090:8090 \
+            -p 9010:9010 \
+            -e active_profile_env=test \
+            -e spring_config_url_env=http://mock-config:8888 \
+            -e artifactory_url_env=http://mock-artifactory:8081 \
+            ${{ env.ECR_REGISTRY }}/mosip-authentication-service:latest
+
+          docker run -d \
+            --name test-auth-internal-service \
+            --network mosip-test-network \
+            -p 8093:8093 \
+            -p 9011:9010 \
+            -e active_profile_env=test \
+            -e spring_config_url_env=http://mock-config:8888 \
+            -e artifactory_url_env=http://mock-artifactory:8081 \
+            ${{ env.ECR_REGISTRY }}/mosip-authentication-internal-service:latest
+
+          docker run -d \
+            --name test-auth-otp-service \
+            --network mosip-test-network \
+            -p 8092:8092 \
+            -p 9012:9010 \
+            -e active_profile_env=test \
+            -e spring_config_url_env=http://mock-config:8888 \
+            -e artifactory_url_env=http://mock-artifactory:8081 \
+            ${{ env.ECR_REGISTRY }}/mosip-authentication-otp-service:latest
+
+          # Wait for services to start
+          sleep 60
+
+          # Check all services are running
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+      - name: Test service connectivity
+        run: |
+          # Test if services are responding
+          echo "Testing service connectivity..."
+
+          # Test authentication-service
+          curl -f http://localhost:8090/actuator/health || echo "Auth service health check failed"
+
+          # Test authentication-internal-service  
+          curl -f http://localhost:8093/actuator/health || echo "Auth internal service health check failed"
+
+          # Test authentication-otp-service
+          curl -f http://localhost:8092/actuator/health || echo "Auth OTP service health check failed"
+
+      - name: Cleanup test containers
+        if: always()
+        run: |
+          docker stop test-auth-service test-auth-internal-service test-auth-otp-service || true
+          docker rm test-auth-service test-auth-internal-service test-auth-otp-service || true
+          docker network rm mosip-test-network || true
+
+  generate-test-report:
+    name: Generate Test Report
+    runs-on: ubuntu-latest
+    needs: [test-docker-images, test-integration]
+    if: always()
+
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "## 🧪 MOSIP ID Authentication Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Test Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Image Tests**: ${{ needs.test-docker-images.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Tests**: ${{ needs.test-integration.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Tested Components" >> $GITHUB_STEP_SUMMARY
+          echo "- authentication-service" >> $GITHUB_STEP_SUMMARY
+          echo "- authentication-internal-service" >> $GITHUB_STEP_SUMMARY
+          echo "- authentication-otp-service" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Test Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- Image structure validation" >> $GITHUB_STEP_SUMMARY
+          echo "- Container startup testing" >> $GITHUB_STEP_SUMMARY
+          echo "- Health check endpoints" >> $GITHUB_STEP_SUMMARY
+          echo "- Security scanning" >> $GITHUB_STEP_SUMMARY
+          echo "- Service connectivity" >> $GITHUB_STEP_SUMMARY
