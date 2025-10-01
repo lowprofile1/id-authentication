@@ -38,7 +38,7 @@ on:
       skip_tests:
         description: "Skip Maven tests"
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
@@ -93,10 +93,10 @@ jobs:
         id: build
         run: |
           cd authentication
-          if [ "${{ github.event.inputs.skip_tests }}" = "true" ]; then
-            mvn clean package -DskipTests
-          else
+          if [ "${{ github.event.inputs.skip_tests }}" = "false" ]; then
             mvn clean package
+          else
+            mvn clean package -DskipTests
           fi
 
           # Create artifacts directory
