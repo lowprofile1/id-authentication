@@ -134,6 +134,9 @@ jobs:
 
       - name: Copy JAR file to service directory
         run: |
+          # Create target directory if it doesn't exist
+          mkdir -p ${{ matrix.service.path }}/target/
+          
           # Copy the specific JAR file for this service
           cp build-artifacts/${{ matrix.service.name }}-*.jar ${{ matrix.service.path }}/target/
           ls -la ${{ matrix.service.path }}/target/
