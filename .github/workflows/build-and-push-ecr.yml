@@ -35,11 +35,6 @@ on:
         required: false
         default: ""
         type: string
-      skip_tests:
-        description: "Skip Maven tests"
-        required: false
-        default: true
-        type: boolean
 
 env:
   AWS_REGION: us-east-1
@@ -93,11 +88,8 @@ jobs:
         id: build
         run: |
           cd authentication
-          if [ "${{ github.event.inputs.skip_tests }}" = "false" ]; then
-            mvn clean package
-          else
-            mvn clean package -DskipTests
-          fi
+          # Skip tests by default to avoid external dependency issues
+          mvn clean package -DskipTests
 
           # Create artifacts directory
           mkdir -p ../build-artifacts
