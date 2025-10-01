@@ -8,15 +8,15 @@ on:
   workflow_dispatch:
     inputs:
       message:
-        description: 'Message for manually triggering'
+        description: "Message for manually triggering"
         required: false
-        default: 'Triggered for Updates'
+        default: "Triggered for Updates"
         type: string
   push:
     branches:
-      - '!release-branch'
+      - "!release-branch"
       - release*
-      - master
+      - "!master" # Disable for master branch to avoid conflicts with our CI/CD
       - 1.*
       - develop
       - MOSIP*
@@ -53,15 +53,15 @@ jobs:
     strategy:
       matrix:
         include:
-          - SERVICE_LOCATION: 'authentication/authentication-otp-service'
-            SERVICE_NAME: 'authentication-otp-service'
-            BUILD_ARTIFACT: 'authentication'
-          - SERVICE_LOCATION: 'authentication/authentication-internal-service'
-            SERVICE_NAME: 'authentication-internal-service'
-            BUILD_ARTIFACT: 'authentication'
-          - SERVICE_LOCATION: 'authentication/authentication-service'
-            SERVICE_NAME: 'authentication-service'
-            BUILD_ARTIFACT: 'authentication'
+          - SERVICE_LOCATION: "authentication/authentication-otp-service"
+            SERVICE_NAME: "authentication-otp-service"
+            BUILD_ARTIFACT: "authentication"
+          - SERVICE_LOCATION: "authentication/authentication-internal-service"
+            SERVICE_NAME: "authentication-internal-service"
+            BUILD_ARTIFACT: "authentication"
+          - SERVICE_LOCATION: "authentication/authentication-service"
+            SERVICE_NAME: "authentication-service"
+            BUILD_ARTIFACT: "authentication"
       fail-fast: false
     name: ${{ matrix.SERVICE_NAME }}
     uses: mosip/kattu/.github/workflows/docker-build.yml@master
