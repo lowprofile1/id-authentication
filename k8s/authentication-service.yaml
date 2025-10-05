@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentication-service
+  namespace: mosip-ida
+  labels:
+    app: authentication-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authentication-service
+  template:
+    metadata:
+      labels:
+        app: authentication-service
+    spec:
+      containers:
+        - name: authentication-service
+          image: 921436147132.dkr.ecr.us-east-1.amazonaws.com/mosip-authentication-service:latest
+          ports:
+            - containerPort: 8090
+              name: http
+            - containerPort: 9010
+              name: management
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "dev"
+            - name: SPRING_CLOUD_CONFIG_LABEL
+              value: "main"
+            - name: SPRING_CLOUD_CONFIG_URI
+              value: "http://config-server:8888"
+            - name: ARTIFACTORY_URL
+              value: "http://artifactory:8081"
+            - name: BIOSDK_ZIP_PATH
+              value: "artifactory/libs-release-local/biosdk/mock/0.9/biosdk.zip"
+            - name: DEMOSDK_ZIP_PATH
+              value: "artifactory/libs-release-local/demosdk/mock/0.9/demosdk.zip"
+            - name: HSM_CLIENT_ZIP_PATH
+              value: "artifactory/libs-release-local/hsm/client.zip"
+            - name: IAM_ADAPTER_URL
+              value: "http://artifactory:8081/kernel-auth-adapter.jar"
+            - name: IS_GLOWROOT
+              value: "absent"
+            - name: DB_HOST
+              value: "mosip-ida-dev-db.ckbisyiait0e.us-east-1.rds.amazonaws.com"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "mosip_ida"
+            - name: DB_USERNAME
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "postgres"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentication-service
+  namespace: mosip-ida
+  labels:
+    app: authentication-service
+spec:
+  selector:
+    app: authentication-service
+  ports:
+    - protocol: TCP
+      port: 8090
+      targetPort: 8090
+      name: http
+    - protocol: TCP
+      port: 9010
+      targetPort: 9010
+      name: management
+  type: ClusterIP

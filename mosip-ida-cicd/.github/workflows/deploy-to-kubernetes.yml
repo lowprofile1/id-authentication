@@ -1,0 +1,174 @@
+name: Deploy MOSIP ID Authentication to Kubernetes
+
+on:
+  workflow_run:
+    workflows: ["Build and Push MOSIP ID Authentication to ECR"]
+    types: [completed]
+    branches: [main, master, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+      version:
+        description: "Version tag for the deployment"
+        required: false
+        default: ""
+        type: string
+      skip_tests:
+        description: "Skip running tests before deployment"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: mosip-ida-dev-cluster
+  NAMESPACE: mosip-ida
+
+jobs:
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.28.0"
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Verify cluster connection
+        run: |
+          kubectl get nodes
+          kubectl get namespaces
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from the previous workflow or use latest
+            VERSION="latest"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Kubernetes manifests with version
+        run: |
+          # Update image tags in deployment files
+          find k8s/ -name "*-deployment.yaml" -exec sed -i "s|:latest|:${{ steps.version.outputs.version }}|g" {} \;
+
+          # Update database host in configmap
+          sed -i "s|DB_HOST: .*|DB_HOST: mosip-ida-${{ github.event.inputs.environment || 'dev' }}-db.ckbisyiait0e.us-east-1.rds.amazonaws.com|g" k8s/configmap.yaml
+
+      - name: Create namespace
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+
+      - name: Deploy ConfigMap and Secrets
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secret.yaml
+
+      - name: Deploy Authentication Service
+        run: |
+          kubectl apply -f k8s/authentication-service-deployment.yaml
+
+      - name: Deploy Authentication Internal Service
+        run: |
+          kubectl apply -f k8s/authentication-internal-service-deployment.yaml
+
+      - name: Deploy Authentication OTP Service
+        run: |
+          kubectl apply -f k8s/authentication-otp-service-deployment.yaml
+
+      - name: Deploy Ingress
+        run: |
+          kubectl apply -f k8s/ingress.yaml
+
+      - name: Wait for deployments to be ready
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/authentication-service -n ${{ env.NAMESPACE }}
+          kubectl wait --for=condition=available --timeout=300s deployment/authentication-internal-service -n ${{ env.NAMESPACE }}
+          kubectl wait --for=condition=available --timeout=300s deployment/authentication-otp-service -n ${{ env.NAMESPACE }}
+
+      - name: Verify deployment
+        run: |
+          echo "=== Pod Status ==="
+          kubectl get pods -n ${{ env.NAMESPACE }}
+
+          echo "=== Service Status ==="
+          kubectl get services -n ${{ env.NAMESPACE }}
+
+          echo "=== Ingress Status ==="
+          kubectl get ingress -n ${{ env.NAMESPACE }}
+
+      - name: Get deployment information
+        id: deployment-info
+        run: |
+          # Get ALB URL
+          ALB_URL=$(kubectl get ingress mosip-ida-ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
+          echo "alb_url=$ALB_URL" >> $GITHUB_OUTPUT
+
+          # Get pod names
+          PODS=$(kubectl get pods -n ${{ env.NAMESPACE }} -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n')
+          echo "pods<<EOF" >> $GITHUB_OUTPUT
+          echo "$PODS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate deployment summary
+        run: |
+          echo "## 🚀 MOSIP ID Authentication Kubernetes Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Deployment Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ github.event.inputs.environment || 'dev' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster**: ${{ env.EKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Namespace**: ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **ALB URL**: ${{ steps.deployment-info.outputs.alb_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Services**: authentication-service, authentication-internal-service, authentication-otp-service" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployed Pods" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.deployment-info.outputs.pods }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Management Commands" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# View pods" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get pods -n ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# View services" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl get services -n ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# View logs" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl logs -f deployment/authentication-service -n ${{ env.NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mosip-ida
+  labels:
+    name: mosip-ida
+    environment: dev
